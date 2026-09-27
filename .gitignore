@@ -1,0 +1,14 @@
+# Streamlit secrets (protect API keys)
+.streamlit/secrets.toml
+
+# Heavy local directories & databases
+chroma_db/
+pdfs/
+
+# Python cache & virtual environments
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.env
