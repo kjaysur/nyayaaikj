@@ -68,18 +68,21 @@ for msg in st.session_state.chat_history:
 
 # 5. Chat Execution Loop
 if user_query := st.chat_input("Ask a legal question or scenario..."):
-    if not groq_api_key:
-        st.error("Please provide a Groq API Key in the sidebar or app secrets to continue.")
+    clean_api_key = groq_api_key.strip().strip('"').strip("'")
+    
+    if not clean_api_key or not clean_api_key.startswith("gsk_"):
+        st.error("⚠️ Invalid or missing Groq API Key. Please check your Streamlit Secrets or sidebar entry.")
         st.stop()
 
-    # Sanitize key to remove any accidental literal quotes or whitespace
-    clean_api_key = groq_api_key.strip().strip('"').strip("'")
-
-    llm = ChatGroq(
-        groq_api_key=clean_api_key,
-        model="llama-3.1-8b-instant",
-        temperature=0.1
-    )
+    try:
+        llm = ChatGroq(
+            groq_api_key=clean_api_key,
+            model="llama-3.1-8b-instant",
+            temperature=0.1
+        )
+    except Exception as e:
+        st.error(f"Failed to initialize Groq model: {e}")
+        st.stop()
 
     draft_chain = draft_prompt | llm | StrOutputParser()
     audit_chain = audit_prompt | llm | StrOutputParser()
