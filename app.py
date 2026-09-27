@@ -13,7 +13,13 @@ st.set_page_config(page_title="NyayaAI: Legal Agent by KJ", page_icon="⚖️", 
 
 # 2. Sidebar Configuration
 st.sidebar.title("⚖️ NyayaAI Settings")
-enable_web_search = st.sidebar.checkbox("🌐 Enable Web Search Fallback", value=True)
+
+# Verification Feature Toggle
+enable_web_verification = st.sidebar.checkbox(
+    "🔎 Double-Check with Live Web Search", 
+    value=True,
+    help="Cross-checks ChromaDB results with live web search before generating the final legal response."
+)
 
 # Active Groq Models
 model_choice = st.sidebar.selectbox(
@@ -22,7 +28,7 @@ model_choice = st.sidebar.selectbox(
     index=0
 )
 
-# API Key loaded directly from Streamlit Secrets (completely hidden from UI)
+# API Key loaded directly from Streamlit Secrets (hidden from UI)
 raw_key = st.secrets.get("GROQ_API_KEY", "")
 groq_api_key = raw_key.strip().strip('"').strip("'")
 
@@ -38,20 +44,30 @@ web_search_tool = DuckDuckGoSearchRun()
 
 today_str = datetime.now().strftime("%A, %B %d, %Y")
 
-# Unified Single-Stage Legal Verification Prompt
-unified_prompt = ChatPromptTemplate.from_messages([
+# Unified Cross-Verification System Prompt
+cross_verify_prompt = ChatPromptTemplate.from_messages([
     ("system", f"""Today's date is {today_str}.
 You are an expert Indian Legal AI Assistant and Auditor (NyayaAI).
-Answer legal queries accurately based on the provided statutory context and strict statutory realities:
 
-1. SECTION NUMBERS: Always explicitly state the main SECTION NUMBER for the offence or procedure under BNS, IPC, BNSS, or BSA (e.g., 'Section 303 of BNS for Theft' or 'Section 101 of BNS for Murder'). Do not output orphan subsection numbers like '(2)' without the main Section.
-2. OFFENCE DATE CUTOFF (July 1, 2024): Offences committed before July 1, 2024 must be charged under IPC (Article 20(1) Ex Post Facto protection), NOT BNS.
-3. PROCEDURAL LAW: Investigations or FIRs registered on or after July 1, 2024 follow BNSS (Section 173 for FIRs).
-4. Generate a clear, structured final output. Always conclude with:
+Your task is to answer legal queries by CROSS-VERIFYING local statutory data (ChromaDB) against live web verification data.
+
+AUDIT & CROSS-VERIFICATION RULES:
+1. RECONCILE DATA: Cross-check the Local Statutory Context with the Live Web Verification Data. If there is a section mapping difference, prioritize official BNS/BNSS/BSA definitions verified by both sources.
+2. STRICT SECTION NUMBERING:
+   - Ensure exact BNS, BNSS, or BSA section numbers are stated (e.g., Murder = Section 103 BNS; Theft = Section 303 BNS; Snatching = Section 302 BNS).
+   - NEVER default to old IPC section numbers when BNS applies.
+3. OFFENCE DATE CUTOFF (July 1, 2024):
+   - Offences before July 1, 2024 -> Charged under IPC (Article 20(1) Ex Post Facto protection).
+   - Offences on/after July 1, 2024 -> Charged under BNS / BNSS.
+
+Always conclude with:
 'Disclaimer: This response is for educational purposes and does not constitute formal legal advice.'
 
-Statutory Context:
-{{context}}"""),
+--- LOCAL STATUTORY CONTEXT (ChromaDB) ---
+{{rag_context}}
+
+--- LIVE WEB VERIFICATION DATA ---
+{{web_context}}"""),
     MessagesPlaceholder(variable_name="chat_history"),
     ("human", "{input}")
 ])
@@ -76,7 +92,7 @@ for msg in st.session_state.chat_history:
 # 5. Chat Execution Loop
 if user_query := st.chat_input("Ask a legal question or scenario..."):
     if not groq_api_key or not groq_api_key.startswith("gsk_"):
-        st.error("⚠️ Missing or invalid Groq API Key in Streamlit Secrets. Please verify `GROQ_API_KEY` is set under App Settings.")
+        st.error("⚠️ Missing or invalid Groq API Key in Streamlit Secrets.")
         st.stop()
 
     try:
@@ -86,7 +102,7 @@ if user_query := st.chat_input("Ask a legal question or scenario..."):
             temperature=0.1,
             max_tokens=1024
         )
-        legal_chain = unified_prompt | llm | StrOutputParser()
+        legal_chain = cross_verify_prompt | llm | StrOutputParser()
     except Exception as e:
         st.error(f"Failed to initialize Groq client: {e}")
         st.stop()
@@ -95,21 +111,29 @@ if user_query := st.chat_input("Ask a legal question or scenario..."):
         st.write(user_query)
 
     with st.chat_message("assistant"):
-        with st.spinner("Analyzing legal query and verifying provisions..."):
+        with st.spinner("Step 1/2: Searching ChromaDB... Step 2/2: Double-checking with live web search..."):
+            
+            # Step 1: Retrieve local statutory passages from ChromaDB
             docs = retriever.invoke(user_query)
-            context_str = format_docs(docs)
+            rag_context = format_docs(docs)
 
-            is_latest_query = any(w in user_query.lower() for w in ["latest", "recent", "2025", "2026", "news", "supreme court"])
-            if enable_web_search and (is_latest_query or len(context_str.strip()) < 100):
+            # Step 2: Double-check with targeted live web search
+            web_context = "Web verification toggled off."
+            if enable_web_verification:
                 try:
-                    web_results = web_search_tool.invoke(f"Indian Law {user_query}")
-                    context_str = f"--- LIVE WEB RESULTS ---\n{web_results}\n\n--- LOCAL STATUTE CONTEXT ---\n{context_str}"
-                except Exception:
-                    pass
+                    # Targeted search query designed for verification
+                    verification_query = f"Bharatiya Nyaya Sanhita section punishment {user_query}"
+                    raw_web_res = web_search_tool.invoke(verification_query)
+                    # Truncate to 1,200 chars to protect token budget
+                    web_context = raw_web_res[:1200]
+                except Exception as err:
+                    web_context = f"Live verification search unavailable: {err}"
 
+            # Step 3: Execute Cross-Verification Chain in a single LLM call
             try:
                 final_answer = legal_chain.invoke({
-                    "context": context_str,
+                    "rag_context": rag_context,
+                    "web_context": web_context,
                     "chat_history": st.session_state.chat_history,
                     "input": user_query
                 })
@@ -120,12 +144,18 @@ if user_query := st.chat_input("Ask a legal question or scenario..."):
 
         st.write(final_answer)
 
-        with st.expander("🔍 View Referenced Legal Sources"):
+        # Expanders for transparent debugging
+        with st.expander("🔍 View Referenced Sources & Verification Data"):
+            st.subheader("Local Statutory Context (ChromaDB)")
             for i, doc in enumerate(docs):
                 act = doc.metadata.get("act_name", "Legal Act")
                 page = doc.metadata.get("page", "N/A")
                 st.markdown(f"**Source {i+1}: {act} (Page {page})**")
                 st.caption(doc.page_content[:250] + "...")
+            
+            if enable_web_verification:
+                st.subheader("Live Web Verification Snippet")
+                st.caption(web_context)
 
     st.session_state.chat_history.append(HumanMessage(content=user_query))
     st.session_state.chat_history.append(AIMessage(content=final_answer))
