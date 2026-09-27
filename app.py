@@ -12,11 +12,22 @@ from langchain_community.tools import DuckDuckGoSearchRun
 st.set_page_config(page_title="NyayaAI: Legal Agent by KJ", page_icon="⚖️", layout="wide")
 
 # 2. Sidebar Configuration
-st.sidebar.title("⚖️ Web Search Option")
+st.sidebar.title("⚖️ NyayaAI Settings")
 enable_web_search = st.sidebar.checkbox("🌐 Enable Web Search Fallback", value=True)
 
-# Free Groq API Key input or session key
-groq_api_key = st.sidebar.text_input("Groq API Key", type="password", value=st.secrets.get("GROQ_API_KEY", ""))
+# Select active Groq Model
+model_choice = st.sidebar.selectbox(
+    "Select Groq Model",
+    ["llama-3.1-8b-instant", "llama-3.3-70b-versatile", "mixtral-8x7b-32768", "gemma2-9b-it"]
+)
+
+# Robust API Key Resolution: Streamlit Secrets > Sidebar Input
+secret_key = st.secrets.get("GROQ_API_KEY", "")
+user_key = st.sidebar.text_input("Groq API Key", type="password", value=secret_key if secret_key else "")
+
+# Priority to clean secret_key if available, otherwise user_key
+raw_key = user_key if user_key else secret_key
+groq_api_key = raw_key.strip().strip('"').strip("'")
 
 # 3. Load Vector Database & Search Tool
 @st.cache_resource
@@ -35,7 +46,7 @@ draft_prompt = ChatPromptTemplate.from_messages([
     ("system", f"Today's date is {today_str}.\n"
                "You are an expert Indian Legal AI Assistant (NyayaAI).\n"
                "Answer legal queries accurately based on the provided statutory context.\n\n"
-               "Context:\n{context}"),
+               "Context:\n{{context}}".replace("{{context}}", "{context}")),
     MessagesPlaceholder(variable_name="chat_history"),
     ("human", "{input}")
 ])
@@ -68,24 +79,21 @@ for msg in st.session_state.chat_history:
 
 # 5. Chat Execution Loop
 if user_query := st.chat_input("Ask a legal question or scenario..."):
-    clean_api_key = groq_api_key.strip().strip('"').strip("'")
-    
-    if not clean_api_key or not clean_api_key.startswith("gsk_"):
-        st.error("⚠️ Invalid or missing Groq API Key. Please check your Streamlit Secrets or sidebar entry.")
+    if not groq_api_key or not groq_api_key.startswith("gsk_"):
+        st.error("⚠️ Invalid or missing Groq API Key. Please enter a valid key starting with `gsk_` in sidebar or Streamlit Secrets.")
         st.stop()
 
     try:
         llm = ChatGroq(
-            groq_api_key=clean_api_key,
-            model="llama-3.1-8b-instant",
+            groq_api_key=groq_api_key,
+            model=model_choice,
             temperature=0.1
         )
+        draft_chain = draft_prompt | llm | StrOutputParser()
+        audit_chain = audit_prompt | llm | StrOutputParser()
     except Exception as e:
-        st.error(f"Failed to initialize Groq model: {e}")
+        st.error(f"Failed to initialize Groq client: {e}")
         st.stop()
-
-    draft_chain = draft_prompt | llm | StrOutputParser()
-    audit_chain = audit_prompt | llm | StrOutputParser()
 
     with st.chat_message("user"):
         st.write(user_query)
@@ -103,16 +111,21 @@ if user_query := st.chat_input("Ask a legal question or scenario..."):
                 except Exception:
                     pass
 
-            draft_answer = draft_chain.invoke({
-                "context": context_str,
-                "chat_history": st.session_state.chat_history,
-                "input": user_query
-            })
+            try:
+                draft_answer = draft_chain.invoke({
+                    "context": context_str,
+                    "chat_history": st.session_state.chat_history,
+                    "input": user_query
+                })
 
-            final_answer = audit_chain.invoke({
-                "input": user_query,
-                "draft_answer": draft_answer
-            })
+                final_answer = audit_chain.invoke({
+                    "input": user_query,
+                    "draft_answer": draft_answer
+                })
+            except Exception as err:
+                st.error(f"Groq API Error: {err}")
+                st.info("Tip: Try switching the model in the sidebar dropdown to `mixtral-8x7b-32768` or `gemma2-9b-it`.")
+                st.stop()
 
         st.write(final_answer)
 
