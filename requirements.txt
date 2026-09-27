@@ -3,5 +3,5 @@ langchain-huggingface
 langchain-chroma
 langchain-groq
 langchain-community
-duckduckgo-search
+duckduckgo-search>=6.0.0
 sentence-transformers
