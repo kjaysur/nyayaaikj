@@ -35,7 +35,7 @@ draft_prompt = ChatPromptTemplate.from_messages([
     ("system", f"Today's date is {today_str}.\n"
                "You are an expert Indian Legal AI Assistant (NyayaAI).\n"
                "Answer legal queries accurately based on the provided statutory context.\n\n"
-               "Context:\n{{context}}"),
+               "Context:\n{context}"),
     MessagesPlaceholder(variable_name="chat_history"),
     ("human", "{input}")
 ])
@@ -74,7 +74,7 @@ if user_query := st.chat_input("Ask a legal question or scenario..."):
 
     llm = ChatGroq(
         groq_api_key=groq_api_key,
-        model_name="llama-3.1-8b-instant",  # Updated active Groq model
+        model="llama-3.3-70b-versatile",
         temperature=0.1
     )
 
