@@ -15,10 +15,10 @@ st.set_page_config(page_title="NyayaAI: Legal Agent by KJ", page_icon="⚖️", 
 st.sidebar.title("⚖️ NyayaAI Settings")
 enable_web_search = st.sidebar.checkbox("🌐 Enable Web Search Fallback", value=True)
 
-# Select active Groq Model
+# Select active Groq Model from your endpoint catalog
 model_choice = st.sidebar.selectbox(
     "Select Groq Model",
-    ["mixtral-8x7b-32768", "llama-3.1-8b-instant", "llama-3.2-3b-preview"]
+    ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b"]
 )
 
 # Robust API Key Resolution: Streamlit Secrets > Sidebar Input
@@ -85,10 +85,10 @@ if user_query := st.chat_input("Ask a legal question or scenario..."):
 
     try:
         llm = ChatGroq(
-            groq_api_key=groq_api_key,
-            model=model_choice,
-            temperature=0.1
-        )
+        groq_api_key=groq_api_key,
+        model=model_choice,
+        temperature=0.1
+    )
         draft_chain = draft_prompt | llm | StrOutputParser()
         audit_chain = audit_prompt | llm | StrOutputParser()
     except Exception as e:
