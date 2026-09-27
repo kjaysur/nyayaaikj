@@ -72,9 +72,12 @@ if user_query := st.chat_input("Ask a legal question or scenario..."):
         st.error("Please provide a Groq API Key in the sidebar or app secrets to continue.")
         st.stop()
 
+    # Sanitize key to remove any accidental literal quotes or whitespace
+    clean_api_key = groq_api_key.strip().strip('"').strip("'")
+
     llm = ChatGroq(
-        groq_api_key=groq_api_key,
-        model="llama-3.1-8b-instant",  # Active & supported Groq model
+        groq_api_key=clean_api_key,
+        model="llama-3.1-8b-instant",
         temperature=0.1
     )
 
