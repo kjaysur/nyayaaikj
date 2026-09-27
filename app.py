@@ -15,18 +15,15 @@ st.set_page_config(page_title="NyayaAI: Legal Agent by KJ", page_icon="⚖️", 
 st.sidebar.title("⚖️ NyayaAI Settings")
 enable_web_search = st.sidebar.checkbox("🌐 Enable Web Search Fallback", value=True)
 
-# Select active Groq Model from your endpoint catalog
+# Active Groq Models
 model_choice = st.sidebar.selectbox(
     "Select Groq Model",
-    ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b"]
+    ["openai/gpt-oss-20b", "qwen/qwen3.8-27b", "openai/gpt-oss-120b"],
+    index=0
 )
 
-# Robust API Key Resolution: Streamlit Secrets > Sidebar Input
-secret_key = st.secrets.get("GROQ_API_KEY", "")
-user_key = st.sidebar.text_input("Groq API Key", type="password", value=secret_key if secret_key else "")
-
-# Priority to clean secret_key if available, otherwise user_key
-raw_key = user_key if user_key else secret_key
+# API Key loaded directly from Streamlit Secrets (completely hidden from UI)
+raw_key = st.secrets.get("GROQ_API_KEY", "")
 groq_api_key = raw_key.strip().strip('"').strip("'")
 
 # 3. Load Vector Database & Search Tool
@@ -34,30 +31,28 @@ groq_api_key = raw_key.strip().strip('"').strip("'")
 def load_resources():
     embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-small-en-v1.5")
     db = Chroma(persist_directory="./chroma_db", embedding_function=embeddings)
-    return db.as_retriever(search_kwargs={"k": 4})
+    return db.as_retriever(search_kwargs={"k": 2})
 
 retriever = load_resources()
 web_search_tool = DuckDuckGoSearchRun()
 
 today_str = datetime.now().strftime("%A, %B %d, %Y")
 
-# Internal Verification Prompts
-draft_prompt = ChatPromptTemplate.from_messages([
-    ("system", f"Today's date is {today_str}.\n"
-               "You are an expert Indian Legal AI Assistant (NyayaAI).\n"
-               "Answer legal queries accurately based on the provided statutory context.\n\n"
-               "Context:\n{{context}}".replace("{{context}}", "{context}")),
-    MessagesPlaceholder(variable_name="chat_history"),
-    ("human", "{input}")
-])
+# Unified Single-Stage Legal Verification Prompt
+unified_prompt = ChatPromptTemplate.from_messages([
+    ("system", f"""Today's date is {today_str}.
+You are an expert Indian Legal AI Assistant and Auditor (NyayaAI).
+Answer legal queries accurately based on the provided statutory context and strict statutory realities:
 
-audit_prompt = ChatPromptTemplate.from_messages([
-    ("system", """You are a Senior Indian Legal Auditor. Refine the draft answer to adhere strictly to Indian statutory realities:
 1. OFFENCE DATE CUTOFF (July 1, 2024): Offences committed before July 1, 2024 must be charged under IPC (Article 20(1) Ex Post Facto protection), NOT BNS.
 2. PROCEDURAL LAW: Investigations or FIRs registered on or after July 1, 2024 follow BNSS (Section 173 for FIRs).
 3. Generate a clear, structured final output. Always conclude with:
-'Disclaimer: This response is for educational purposes and does not constitute formal legal advice.'"""),
-    ("human", "User Question: {input}\n\nDraft Answer:\n{draft_answer}")
+'Disclaimer: This response is for educational purposes and does not constitute formal legal advice.'
+
+Statutory Context:
+{{context}}"""),
+    MessagesPlaceholder(variable_name="chat_history"),
+    ("human", "{input}")
 ])
 
 def format_docs(docs):
@@ -80,17 +75,17 @@ for msg in st.session_state.chat_history:
 # 5. Chat Execution Loop
 if user_query := st.chat_input("Ask a legal question or scenario..."):
     if not groq_api_key or not groq_api_key.startswith("gsk_"):
-        st.error("⚠️ Invalid or missing Groq API Key. Please enter a valid key starting with `gsk_` in sidebar or Streamlit Secrets.")
+        st.error("⚠️ Missing or invalid Groq API Key in Streamlit Secrets. Please verify `GROQ_API_KEY` is set under App Settings.")
         st.stop()
 
     try:
         llm = ChatGroq(
-        groq_api_key=groq_api_key,
-        model=model_choice,
-        temperature=0.1
-    )
-        draft_chain = draft_prompt | llm | StrOutputParser()
-        audit_chain = audit_prompt | llm | StrOutputParser()
+            groq_api_key=groq_api_key,
+            model=model_choice,
+            temperature=0.1,
+            max_tokens=1024
+        )
+        legal_chain = unified_prompt | llm | StrOutputParser()
     except Exception as e:
         st.error(f"Failed to initialize Groq client: {e}")
         st.stop()
@@ -112,19 +107,14 @@ if user_query := st.chat_input("Ask a legal question or scenario..."):
                     pass
 
             try:
-                draft_answer = draft_chain.invoke({
+                final_answer = legal_chain.invoke({
                     "context": context_str,
                     "chat_history": st.session_state.chat_history,
                     "input": user_query
                 })
-
-                final_answer = audit_chain.invoke({
-                    "input": user_query,
-                    "draft_answer": draft_answer
-                })
             except Exception as err:
                 st.error(f"Groq API Error: {err}")
-                st.info("Tip: Try switching the model in the sidebar dropdown to `mixtral-8x7b-32768` or `llama-3.1-8b-instant`.")
+                st.info("Tip: Try switching models in the sidebar dropdown.")
                 st.stop()
 
         st.write(final_answer)
