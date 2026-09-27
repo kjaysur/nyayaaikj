@@ -18,7 +18,7 @@ enable_web_search = st.sidebar.checkbox("🌐 Enable Web Search Fallback", value
 # Select active Groq Model
 model_choice = st.sidebar.selectbox(
     "Select Groq Model",
-    ["llama-3.1-8b-instant", "llama-3.3-70b-versatile", "mixtral-8x7b-32768", "gemma2-9b-it"]
+    ["mixtral-8x7b-32768", "llama-3.1-8b-instant", "llama-3.2-3b-preview"]
 )
 
 # Robust API Key Resolution: Streamlit Secrets > Sidebar Input
@@ -124,7 +124,7 @@ if user_query := st.chat_input("Ask a legal question or scenario..."):
                 })
             except Exception as err:
                 st.error(f"Groq API Error: {err}")
-                st.info("Tip: Try switching the model in the sidebar dropdown to `mixtral-8x7b-32768` or `gemma2-9b-it`.")
+                st.info("Tip: Try switching the model in the sidebar dropdown to `mixtral-8x7b-32768` or `llama-3.1-8b-instant`.")
                 st.stop()
 
         st.write(final_answer)
