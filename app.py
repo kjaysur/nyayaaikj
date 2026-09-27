@@ -74,7 +74,7 @@ if user_query := st.chat_input("Ask a legal question or scenario..."):
 
     llm = ChatGroq(
         groq_api_key=groq_api_key,
-        model="llama3-70b-8192",  # Standard Groq production model ID
+        model="llama-3.1-8b-instant",  # Active & supported Groq model
         temperature=0.1
     )
 
