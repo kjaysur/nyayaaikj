@@ -6,3 +6,4 @@ langchain-community
 duckduckgo-search==5.3.1b1
 ddgs
 sentence-transformers
+torchvision
