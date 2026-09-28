@@ -26,6 +26,7 @@ model_choice = st.sidebar.selectbox(
     index=0
 )
 
+# API Key loaded directly from Streamlit Secrets
 raw_key = st.secrets.get("GROQ_API_KEY", "")
 groq_api_key = raw_key.strip().strip('"').strip("'")
 
@@ -41,7 +42,7 @@ web_search_tool = DuckDuckGoSearchRun()
 
 today_str = datetime.now().strftime("%A, %B %d, %Y")
 
-# 4. System Prompt with Case Law & Precedents Integration
+# 4. Act-Agnostic System Prompt with Case Law & Pure Markdown Rules
 cross_verify_prompt = ChatPromptTemplate.from_messages([
     ("system", f"""Today's date is {today_str}.
 You are an expert Indian Legal AI Assistant (NyayaAI) grounded in the complete body of Indian Statutory Law (849 Central Acts) and Case Law / Precedents from the Supreme Court and High Courts of India.
@@ -50,26 +51,31 @@ Your objective is to provide precise, authoritative, and factually grounded lega
 
 STRICT GROUNDING & RESPONSE RULES:
 1. UNIVERSAL STATUTORY ACCURACY:
-   - Identify and cite the EXACT Act and Section governing the user's query (e.g., Companies Act 2013, Arbitration Act 1996, Income Tax Act 1961, BNS 2023, Consumer Protection Act 2019, Hindu Marriage Act 1955, etc.).
+   - Identify and cite the EXACT Act and Section governing the user's query (e.g., Companies Act 2013, Arbitration Act 1996, Income Tax Act 1961, BNS 2023, Consumer Protection Act 2019, Hindu Marriage Act 1955, Hindu Succession Act 1956, etc.).
    - NEVER assume an offence or civil matter falls under BNS or IPC if it is governed by another specific Act.
 
 2. JUDGMENTS & CASE LAW PRECEDENTS:
    - If the user explicitly asks for judgments, case laws, or precedents, OR if interpreting the statute requires judicial clarification, include a dedicated section titled '### Relevant Judgments & Judicial Precedents'.
-   - Format citations clearly: *Case Name v. Union of India / Opposing Party* (Year) [Supreme Court / High Court], along with a concise 1-2 sentence summary of the core ratio decidendi (legal holding).
+   - Format citations clearly: *Case Name v. Union of India / Opposing Party* (Year) [Supreme Court / High Court], along with a concise 1-2 sentence summary of the core legal holding.
 
-3. ZERO HALLUCINATION & GROUNDING:
+3. ZERO HALLUCINATION & STRICT GROUNDING:
    - Base your response strictly on active, enacted Indian legislation and authentic judicial precedents. NEVER cite lapsed Bills, draft proposals, or non-existent cases/sections.
    - If a specific judgment or provision is not present in the provided statutory context or web search data, explicitly state that rather than inventing case names or section numbers.
 
-4. FLEXIBLE PRESENTATION:
+4. FLEXIBLE PRESENTATION (TABLE ONLY WHEN HELPFUL):
    - Use Markdown tables ONLY when comparing multiple statutory provisions, listing distinct penalties, or comparing old vs. new laws.
    - For general questions, case law summaries, or procedural advice, use clear headings, concise paragraphs, and bullet points.
 
 5. PURE MARKDOWN FORMATTING (NO HTML/BR TAGS):
    - NEVER use HTML tags like `<br>`, `<b>`, `<i>`, or `<ul>` anywhere in the response.
+   - Separate multiple items using simple commas or standard Markdown bullet points (`- `).
 
 6. NO TECHNICAL MECHANICS:
    - NEVER mention "ChromaDB", "Local Statutory Context", "Live Web Verification", "database", or internal RAG mechanics in your final answer.
+
+7. STRICT CRIMINAL SECTION NUMBERING & DATE CUTOFF (July 1, 2024):
+   - Offences before July 1, 2024 -> Charged under IPC (Article 20(1) Ex Post Facto protection).
+   - Offences on/after July 1, 2024 -> Charged under BNS / BNSS.
 
 Always conclude with:
 'Disclaimer: This response is for educational purposes and does not constitute formal legal advice.'
@@ -120,17 +126,16 @@ if user_query := st.chat_input("Ask any legal question or request judgments/case
         st.write(user_query)
 
     with st.chat_message("assistant"):
-        with st.spinner("Searching 849 Central Acts & retrieving relevant judgments..."):
+        with st.spinner("Searching 849 Central Acts & retrieving relevant precedents..."):
             
-            # Step 1: Retrieve statutory passages from ChromaDB
+            # Step 1: Retrieve statutory passages across all 849 Acts
             docs = retriever.invoke(user_query)
             rag_context = format_docs(docs)
 
-            # Step 2: Dynamic targeted web search for Judgments & Precedents
+            # Step 2: Dynamic targeted web search for Judgments & Verification
             web_context = "Web verification toggled off."
             if enable_web_verification:
                 try:
-                    # Detect if user specifically requested case laws or judgments
                     case_keywords = ["judgment", "judgement", "case law", "precedent", "supreme court", "high court", "ruling", "landmark case", "vs", "v."]
                     is_case_req = any(kw in user_query.lower() for kw in case_keywords)
 
@@ -140,7 +145,7 @@ if user_query := st.chat_input("Ask any legal question or request judgments/case
                         verification_query = f"Indian law statutory section landmark judgment {user_query}"
 
                     raw_web_res = web_search_tool.invoke(verification_query)
-                    web_context = raw_web_res[:1500]  # Expanded to capture case citation details
+                    web_context = raw_web_res[:1500]
                 except Exception as err:
                     web_context = f"Live verification search unavailable: {err}"
 
@@ -159,7 +164,7 @@ if user_query := st.chat_input("Ask any legal question or request judgments/case
 
         st.write(final_answer)
 
-        with st.expander("🔍 View Referenced Sources & Web Verification Data"):
+        with st.expander("🔍 View Referenced Sources & Verification Data"):
             st.subheader("Statutory Context (Retrieved Chunks)")
             for i, doc in enumerate(docs):
                 act = doc.metadata.get("act_name", "Legal Act")
