@@ -30,7 +30,7 @@ model_choice = st.sidebar.selectbox(
 raw_key = st.secrets.get("GROQ_API_KEY", "")
 groq_api_key = raw_key.strip().strip('"').strip("'")
 
-# 3. Load Vector Database (Expanded Retrieval k=5 for All 849 Acts)
+# 3. Load Vector Database (Expanded Retrieval k=5)
 @st.cache_resource
 def load_resources():
     embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-small-en-v1.5")
@@ -42,40 +42,30 @@ web_search_tool = DuckDuckGoSearchRun()
 
 today_str = datetime.now().strftime("%A, %B %d, %Y")
 
-# 4. Act-Agnostic System Prompt with Case Law & Pure Markdown Rules
+# 4. Anti-Hallucination System Prompt
 cross_verify_prompt = ChatPromptTemplate.from_messages([
     ("system", f"""Today's date is {today_str}.
-You are an expert Indian Legal AI Assistant (NyayaAI) grounded in the complete body of Indian Statutory Law (849 Central Acts) and Case Law / Precedents from the Supreme Court and High Courts of India.
+You are an expert Indian Legal AI Assistant (NyayaAI) grounded strictly in the body of Indian Statutory Law (849 Central Acts) and authentic Case Law from the Supreme Court and High Courts of India.
 
-Your objective is to provide precise, authoritative, and factually grounded legal answers.
+STRICT ZERO-HALLUCINATION & GROUNDING RULES:
+1. STRICT CONTEXT GROUNDING:
+   - Base your answer ONLY on active, enacted Indian legislation and authentic verified precedents provided in the context below.
+   - If a specific provision or judgment is NOT present in the statutory context or live web verification data, explicitly state: 'The exact statutory section/precedent for this scenario was not found in the verified legal sources.' NEVER invent section numbers or case titles.
 
-STRICT GROUNDING & RESPONSE RULES:
-1. UNIVERSAL STATUTORY ACCURACY:
-   - Identify and cite the EXACT Act and Section governing the user's query (e.g., Companies Act 2013, Arbitration Act 1996, Income Tax Act 1961, BNS 2023, Consumer Protection Act 2019, Hindu Marriage Act 1955, Hindu Succession Act 1956, etc.).
-   - NEVER assume an offence or civil matter falls under BNS or IPC if it is governed by another specific Act.
+2. UNIVERSAL STATUTORY ACCURACY:
+   - Identify and cite the EXACT Act and Section governing the query (e.g., Companies Act 2013, BNS 2023, Consumer Protection Act 2019, Hindu Marriage Act 1955, etc.).
+   - NEVER classify civil, corporate, or personal laws under BNS or IPC.
 
-2. JUDGMENTS & CASE LAW PRECEDENTS:
-   - If the user explicitly asks for judgments, case laws, or precedents, OR if interpreting the statute requires judicial clarification, include a dedicated section titled '### Relevant Judgments & Judicial Precedents'.
-   - Format citations clearly: *Case Name v. Union of India / Opposing Party* (Year) [Supreme Court / High Court], along with a concise 1-2 sentence summary of the core legal holding.
+3. CASE LAW CITATION RULE:
+   - ONLY cite case laws if an authentic case name (e.g., 'X v. Y') appears directly in the VERIFICATION & CASE LAW DATA snippet.
+   - Format citations clearly: *Case Name v. Opposing Party* (Year) [Court], with a concise 1-2 sentence legal ratio. NEVER cite non-existent cases, lapsed Bills, or draft proposals.
 
-3. ZERO HALLUCINATION & STRICT GROUNDING:
-   - Base your response strictly on active, enacted Indian legislation and authentic judicial precedents. NEVER cite lapsed Bills, draft proposals, or non-existent cases/sections.
-   - If a specific judgment or provision is not present in the provided statutory context or web search data, explicitly state that rather than inventing case names or section numbers.
+4. PURE MARKDOWN FORMATTING (NO HTML/BR TAGS):
+   - NEVER use HTML tags like `<br>`, `<b>`, `<i>`, or `<ul>` anywhere in your output.
+   - Use standard Markdown bullets (`- `) or simple commas.
 
-4. FLEXIBLE PRESENTATION (TABLE ONLY WHEN HELPFUL):
-   - Use Markdown tables ONLY when comparing multiple statutory provisions, listing distinct penalties, or comparing old vs. new laws.
-   - For general questions, case law summaries, or procedural advice, use clear headings, concise paragraphs, and bullet points.
-
-5. PURE MARKDOWN FORMATTING (NO HTML/BR TAGS):
-   - NEVER use HTML tags like `<br>`, `<b>`, `<i>`, or `<ul>` anywhere in the response.
-   - Separate multiple items using simple commas or standard Markdown bullet points (`- `).
-
-6. NO TECHNICAL MECHANICS:
-   - NEVER mention "ChromaDB", "Local Statutory Context", "Live Web Verification", "database", or internal RAG mechanics in your final answer.
-
-7. STRICT CRIMINAL SECTION NUMBERING & DATE CUTOFF (July 1, 2024):
-   - Offences before July 1, 2024 -> Charged under IPC (Article 20(1) Ex Post Facto protection).
-   - Offences on/after July 1, 2024 -> Charged under BNS / BNSS.
+5. NO TECHNICAL MECHANICS:
+   - NEVER mention "ChromaDB", "Local Statutory Context", "Live Web Verification", "database", or RAG mechanics in your final answer.
 
 Always conclude with:
 'Disclaimer: This response is for educational purposes and does not constitute formal legal advice.'
@@ -94,7 +84,7 @@ def format_docs(docs):
 
 # 5. UI Header & Presentation
 st.title("⚖️ NyayaAI: Legal Agent by KJ")
-st.caption("Intelligent Legal Assistant Grounded on 849 Indian Central Acts & Judicial Precedents")
+st.caption("Intelligent Legal Assistant Grounded on 849 Indian Central Acts & Verified Judicial Precedents")
 
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
@@ -111,10 +101,11 @@ if user_query := st.chat_input("Ask any legal question or request judgments/case
         st.stop()
 
     try:
+        # Temperature set to 0.0 for zero creativity / strict factual determinism
         llm = ChatGroq(
             groq_api_key=groq_api_key,
             model=model_choice,
-            temperature=0.1,
+            temperature=0.0,
             max_tokens=1024
         )
         legal_chain = cross_verify_prompt | llm | StrOutputParser()
@@ -126,13 +117,13 @@ if user_query := st.chat_input("Ask any legal question or request judgments/case
         st.write(user_query)
 
     with st.chat_message("assistant"):
-        with st.spinner("Searching 849 Central Acts & retrieving relevant precedents..."):
+        with st.spinner("Searching 849 Central Acts & verifying against authoritative legal databases..."):
             
             # Step 1: Retrieve statutory passages across all 849 Acts
             docs = retriever.invoke(user_query)
             rag_context = format_docs(docs)
 
-            # Step 2: Dynamic targeted web search for Judgments & Verification
+            # Step 2: Domain-Restricted Web Verification (Domain filtering to block web noise)
             web_context = "Web verification toggled off."
             if enable_web_verification:
                 try:
@@ -140,9 +131,11 @@ if user_query := st.chat_input("Ask any legal question or request judgments/case
                     is_case_req = any(kw in user_query.lower() for kw in case_keywords)
 
                     if is_case_req:
-                        verification_query = f"Supreme Court India landmark judgment precedent {user_query}"
+                        # Target Indian Kanoon, SC Observer, and Supreme Court Official site
+                        verification_query = f"site:indiankanoon.org OR site:scobserver.in OR site:main.sci.gov.in landmark judgment {user_query}"
                     else:
-                        verification_query = f"Indian law statutory section landmark judgment {user_query}"
+                        # Target Gazette of India and Indian Kanoon
+                        verification_query = f"site:indiankanoon.org OR site:egazette.gov.in statutory section {user_query}"
 
                     raw_web_res = web_search_tool.invoke(verification_query)
                     web_context = raw_web_res[:1500]
@@ -173,7 +166,7 @@ if user_query := st.chat_input("Ask any legal question or request judgments/case
                 st.caption(doc.page_content[:250] + "...")
             
             if enable_web_verification:
-                st.subheader("Live Verification & Judgment Snippets")
+                st.subheader("Live Verification Snippets (Domain Filtered)")
                 st.caption(web_context)
 
     st.session_state.chat_history.append(HumanMessage(content=user_query))
