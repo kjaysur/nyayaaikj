@@ -26,57 +26,53 @@ model_choice = st.sidebar.selectbox(
     index=0
 )
 
-# API Key loaded directly from Streamlit Secrets
 raw_key = st.secrets.get("GROQ_API_KEY", "")
 groq_api_key = raw_key.strip().strip('"').strip("'")
 
-# 3. Load Vector Database (Expanded Retrieval k=5)
+# 3. Load Vector Database (k=6 Retrieval Depth)
 @st.cache_resource
 def load_resources():
     embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-small-en-v1.5")
     db = Chroma(persist_directory="./chroma_db", embedding_function=embeddings)
-    return db.as_retriever(search_kwargs={"k": 5})
+    return db.as_retriever(search_kwargs={"k": 6})
 
 retriever = load_resources()
 web_search_tool = DuckDuckGoSearchRun()
 
 today_str = datetime.now().strftime("%A, %B %d, %Y")
 
-# 4. Anti-Hallucination System Prompt
+# 4. Pure Universal Extraction Prompt (Zero Specific Law Hardcoding)
 cross_verify_prompt = ChatPromptTemplate.from_messages([
     ("system", f"""Today's date is {today_str}.
-You are an expert Indian Legal AI Assistant (NyayaAI) grounded strictly in the body of Indian Statutory Law (849 Central Acts) and authentic Case Law.
+You are an expert Indian Legal AI Assistant (NyayaAI) operating under a STRICT ZERO-HALLUCINATION POLICY.
 
-STRICT ZERO-HALLUCINATION & GROUNDING RULES:
-1. STRICT CONTEXT GROUNDING:
-   - Base your answer ONLY on active, enacted Indian legislation and authentic verified precedents provided in the context below.
-   - If a specific provision or judgment is NOT present in the statutory context or live web verification data, explicitly state: 'The exact statutory section/precedent for this scenario was not found in the verified legal sources.' NEVER invent section numbers or case titles.
+CORE ARCHITECTURAL RULE:
+You are an extraction and synthesis engine. You must answer questions using ONLY the facts explicitly stated in the provided STATUTORY CONTEXT and VERIFICATION DATA. You are strictly forbidden from using internal pre-training memory to invent, guess, or extrapolate section numbers, offences, penalties, or case names.
 
-2. ATTEMPT PROVISIONS & STATUTE ISOLATION:
-   - Offences on/after July 1, 2024 -> BNS. Attempts fall under BNS Section 62.
-   - Offences before July 1, 2024 -> IPC. Attempts fall under IPC Section 511.
-   - NEVER cite IPC Section 107 (Abetment) for an Attempt.
-   - NEVER mix IPC sections with BNS sections for the same offence.
+STRICT OPERATIONAL DIRECTIVES:
+1. MANDATORY SOURCE CITATIONS:
+   - Every legal claim, section, or penalty stated MUST be directly backed by the provided STATUTORY CONTEXT or VERIFICATION DATA.
+   - Attach inline source references matching the context headers, e.g., '[Source: Act Name, Page X]'.
 
-3. NO LOW-NUMBER GUESSING:
-   - Do NOT default to single-digit section numbers (e.g., Section 1, 3, 4) unless explicitly present in the retrieved statutory text.
+2. HONEST FALLBACK ON MISSING DATA:
+   - If the exact section number or legal detail for a query is NOT present in the retrieved STATUTORY CONTEXT or VERIFICATION DATA, state:
+     "The exact statutory section or provision for this scenario is not present in the retrieved database context."
+   - NEVER guess single-digit section numbers, invent section mappings, or combine old/new statutes from memory.
 
-4. UNIVERSAL STATUTORY ACCURACY:
-   - Identify and cite the EXACT Act and Section governing the query (e.g., Companies Act 2013, BNS 2023, Consumer Protection Act 2019, Hindu Marriage Act 1955, etc.). NEVER classify civil laws under BNS or IPC.
+3. DYNAMIC ACT IDENTIFICATION:
+   - Cite the exact Act name as present in the source chunks (e.g., Companies Act, Hindu Marriage Act, BNS, IPC, Income Tax Act). Never force criminal statutes (BNS/IPC) onto civil or corporate queries.
 
-5. CASE LAW CITATION RULE:
-   - ONLY cite case laws if an authentic case name (e.g., 'X v. Y') appears directly in the VERIFICATION & CASE LAW DATA snippet. NEVER fabricate case titles.
+4. PURE MARKDOWN FORMATTING:
+   - Use Markdown tables ONLY when comparing multiple provisions or penalties.
+   - NEVER use HTML tags like `<br>`, `<b>`, `<i>`, or `<ul>`.
 
-6. PURE MARKDOWN FORMATTING (NO HTML/BR TAGS):
-   - NEVER use HTML tags like `<br>`, `<b>`, `<i>`, or `<ul>`. Use standard Markdown bullets (`- `) or simple commas.
-
-7. NO TECHNICAL MECHANICS:
-   - NEVER mention "ChromaDB", "Local Statutory Context", "Live Web Verification", "database", or RAG mechanics in your answer.
+5. NO TECHNICAL MECHANICS:
+   - Do NOT mention "ChromaDB", "Vector Database", "RAG", "Retrieved Chunks", or internal code mechanics.
 
 Always conclude with:
 'Disclaimer: This response is for educational purposes and does not constitute formal legal advice.'
 
---- STATUTORY CONTEXT (849 Central Acts) ---
+--- STATUTORY CONTEXT (Retrieved Documents) ---
 {{rag_context}}
 
 --- VERIFICATION & CASE LAW DATA ---
@@ -86,11 +82,26 @@ Always conclude with:
 ])
 
 def format_docs(docs):
-    return "\n\n".join(f"[{doc.metadata.get('act_name', 'Act')} - Page {doc.metadata.get('page', 'N/A')}]: {doc.page_content}" for doc in docs)
+    formatted = []
+    for doc in docs:
+        act = doc.metadata.get('act_name', 'Indian Statute')
+        page = doc.metadata.get('page', 'N/A')
+        content = doc.page_content.strip()
+        formatted.append(f"--- DOCUMENT CHUNK [{act} - Page {page}] ---\n{content}")
+    return "\n\n".join(formatted)
+
+def sanitize_web_context(raw_res):
+    # Filter out non-legal web noise
+    legal_indicators = ["section", "act", "court", "judgment", "sanhita", "code", "punishment", "held", "vs", "v."]
+    lines = raw_res.split(". ")
+    filtered_lines = [line for line in lines if any(ind in line.lower() for ind in legal_indicators)]
+    if filtered_lines:
+        return ". ".join(filtered_lines)[:1500]
+    return "No authoritative legal web snippets found."
 
 # 5. UI Header & Presentation
 st.title("⚖️ NyayaAI: Legal Agent by KJ")
-st.caption("Intelligent Legal Assistant Grounded on 849 Indian Central Acts & Verified Judicial Precedents")
+st.caption("Factual Legal Assistant Grounded on 849 Indian Central Acts")
 
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
@@ -101,13 +112,13 @@ for msg in st.session_state.chat_history:
         st.write(msg.content)
 
 # 6. Chat Execution Loop
-if user_query := st.chat_input("Ask any legal question or request judgments/case laws..."):
+if user_query := st.chat_input("Ask any legal question..."):
     if not groq_api_key or not groq_api_key.startswith("gsk_"):
         st.error("⚠️ Missing or invalid Groq API Key in Streamlit Secrets.")
         st.stop()
 
     try:
-        # Temperature set to 0.0 for zero creativity / strict factual determinism
+        # Temperature 0.0 guarantees maximum factual determinism
         llm = ChatGroq(
             groq_api_key=groq_api_key,
             model=model_choice,
@@ -123,28 +134,26 @@ if user_query := st.chat_input("Ask any legal question or request judgments/case
         st.write(user_query)
 
     with st.chat_message("assistant"):
-        with st.spinner("Searching 849 Central Acts & verifying against authoritative legal databases..."):
+        with st.spinner("Searching statutory database & verifying facts..."):
             
-            # Step 1: Retrieve statutory passages across all 849 Acts
+            # Step 1: Retrieve statutory passages from ChromaDB
             docs = retriever.invoke(user_query)
             rag_context = format_docs(docs)
 
-            # Step 2: Domain-Restricted Web Verification (Domain filtering to block web noise)
+            # Step 2: Web verification with domain filtering & noise reduction
             web_context = "Web verification toggled off."
             if enable_web_verification:
                 try:
-                    case_keywords = ["judgment", "judgement", "case law", "precedent", "supreme court", "high court", "ruling", "landmark case", "vs", "v."]
+                    case_keywords = ["judgment", "judgement", "case law", "precedent", "supreme court", "high court"]
                     is_case_req = any(kw in user_query.lower() for kw in case_keywords)
 
                     if is_case_req:
-                        # Target Indian Kanoon, SC Observer, and Supreme Court Official site
-                        verification_query = f"site:indiankanoon.org OR site:scobserver.in OR site:main.sci.gov.in landmark judgment {user_query}"
+                        verification_query = f"site:indiankanoon.org OR site:scobserver.in Supreme Court landmark judgment {user_query}"
                     else:
-                        # Target Gazette of India and Indian Kanoon
                         verification_query = f"site:indiankanoon.org OR site:egazette.gov.in statutory section {user_query}"
 
                     raw_web_res = web_search_tool.invoke(verification_query)
-                    web_context = raw_web_res[:1500]
+                    web_context = sanitize_web_context(raw_web_res)
                 except Exception as err:
                     web_context = f"Live verification search unavailable: {err}"
 
@@ -163,16 +172,16 @@ if user_query := st.chat_input("Ask any legal question or request judgments/case
 
         st.write(final_answer)
 
-        with st.expander("🔍 View Referenced Sources & Verification Data"):
-            st.subheader("Statutory Context (Retrieved Chunks)")
+        with st.expander("🔍 View Raw Retrieved Context (Source Grounding)"):
+            st.subheader("Statutory Context (ChromaDB Chunks)")
             for i, doc in enumerate(docs):
                 act = doc.metadata.get("act_name", "Legal Act")
                 page = doc.metadata.get("page", "N/A")
-                st.markdown(f"**Source {i+1}: {act} (Page {page})**")
-                st.caption(doc.page_content[:250] + "...")
+                st.markdown(f"**Chunk {i+1}: {act} (Page {page})**")
+                st.caption(doc.page_content[:300] + "...")
             
             if enable_web_verification:
-                st.subheader("Live Verification Snippets (Domain Filtered)")
+                st.subheader("Sanitized Web Verification Snippet")
                 st.caption(web_context)
 
     st.session_state.chat_history.append(HumanMessage(content=user_query))
